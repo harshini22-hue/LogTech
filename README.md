@@ -10,5 +10,4 @@ Required environment variables
 - `JIRA_BASE` — (optional) custom Jira base URL (default: `https://mitel.atlassian.net`).
 
 Quick tests
-- Test Ollama connectivity: `python test_ollama.py` (prints the model response).
 - Run RCA from CLI: `python run_query.py -d "short description"`.
