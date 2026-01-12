@@ -32,13 +32,13 @@ def parse_log_file(log_path, output_json):
         for raw_line in f:
             line = raw_line.strip()
 
-            # Step 1: match header line
+            # match header line
             header_match = HEADER_PATTERN.search(line)
             if header_match:
                 pending_header = header_match.groupdict()
                 continue
 
-            # Step 2: match detail line
+            # match detail line
             if pending_header:
                 detail_match = DETAIL_PATTERN.match(line)
                 if detail_match:
@@ -68,7 +68,7 @@ def parse_log_file(log_path, output_json):
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 
-    print(f"✅ Parsed {len(entries)} log entries → {output_json}")
+    print(f"Parsed {len(entries)} log entries → {output_json}")
 
 
 if __name__ == "__main__":
