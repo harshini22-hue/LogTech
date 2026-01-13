@@ -3,7 +3,6 @@ from typing import List
 
 from jira import search_jira, build_jira_context
 from llm import run_llm
-from log_analyzer import analyze_log_text, format_for_llm
 from jira import extract_text_from_adf
 
 # Matching utilities
@@ -35,7 +34,7 @@ def find_matching_jira_issues(
     jira_issues: List[dict],
     user_description: str,
     threshold: float = 0.15,
-    top_n: int = 3
+    top_n: int = 100
 ) -> List[dict]:
     """
     Select Jira issues that actually match the user description.
@@ -55,33 +54,58 @@ def find_matching_jira_issues(
 
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    # DEBUG (uncomment if needed)
     # print("Top Jira match scores:")
     # for i, s in scored[:5]:
     #     print(i["key"], s, i["fields"]["summary"])
 
     return [i[0] for i in scored[:top_n]]
 
-# RCA ENTRY POINT 
-def run_rca(description: str, log_text: str = "") -> str:
-    """
-    Main RCA pipeline:
-    1. Analyze logs
-    2. Fetch Jira issues
-    3. Deterministically match Jira issues
-    4. Ask LLM to explain + RCA
-    """
-    # Step 1: Analyze logs
-   
-    log_analysis = analyze_log_text(log_text or "")
-    log_summary = format_for_llm(log_analysis)
+# for log analysis --> llm
 
-   
-    # Step 2: Fetch Jira issues
+def build_llm_log_context(parsed_logs: dict, max_events: int = 150):
+    if not parsed_logs or not isinstance(parsed_logs, dict):
+        return []
 
+    important_levels = {"ERROR", "WARNING", "FATAL", "INFO"}
+    events = []
+
+    for e in parsed_logs.get("entries", []):
+        if e.get("level") not in important_levels:
+            continue
+
+        events.append({
+            "level": e.get("level", "UNKNOWN"),
+            "component": e.get("component", "UNKNOWN"),
+            "message": e.get("message", ""),
+            "timestamp": e.get("timestamp", "")
+        })
+
+    return events[:max_events]
+
+# RCA ENTRY POINT
+def run_rca(description: str, parsed_logs: dict | None = None) -> str:
+    """
+    Works with:
+    - description only
+    - description + parsed logs
+    """
+
+    # Prepare log summary
+    llm_logs = build_llm_log_context(parsed_logs)
+
+    if llm_logs:
+        log_summary = "\n".join(
+            f"[{e['level']}] {e['component']}: {e['message']}"
+            for e in llm_logs
+            if e["message"]
+        )
+    else:
+        log_summary = "No log file provided or no significant log events found."
+
+    # Fetch Jira issues
     jira_issues = search_jira()
 
-    # Step 3: Match Jira issues
+    # Match Jira issues
     matched_issues = find_matching_jira_issues(
         jira_issues,
         user_description=description
@@ -97,56 +121,64 @@ def run_rca(description: str, log_text: str = "") -> str:
         )
 
         prompt = f"""
-You are a senior SIP/HFA Root Cause Analysis engineer.
+You are a senior SIP/HFA Root Cause Analysis engineer with deep expertise in
+telephony call flows, SIP signaling, and phone state machines.
 
 IMPORTANT RULES:
-- The Jira issues below were pre-matched by keyword similarity.
-- Do NOT invent Jira tickets.
-- ONLY reference the Jira issues listed below.
+- The Jira issues listed below were pre-matched using deterministic keyword similarity.
+- Do NOT invent new Jira tickets.
+- Do NOT reference any Jira ticket other than the ones explicitly listed.
+- Base your analysis strictly on the provided description and log events.
 
 ISSUE DESCRIPTION:
 {description}
 
-LOG ANALYSIS SUMMARY:
+PARSED LOG EVENTS (chronological order):
 {log_summary}
 
 MATCHING JIRA ISSUES:
 {jira_links}
 
 TASK:
-1. Confirm which Jira issue(s) match this problem.
-2. Clearly mention the Jira key and URL.
-3. Provide a concise root cause analysis.
-4. Suggest clear, actionable fixes.
+1. Determine whether any of the listed Jira issues truly match the observed problem.
+2. Explicitly mention the Jira key(s) and URL(s) that match, if applicable.
+3. Provide a clear and concise root cause analysis based on the logs and comments of the jira tickets if any.
+4. If a fix or workaround is mentioned in the matching Jira issue(s), summarize it.
+5. If no fix is documented, suggest a technically sound fix based on the root cause.
+6. write the output in professional English.
+
+
+OUTPUT FORMAT:
+- Matched Jira Issue(s): <key(s) or "None">
+- Root Cause:
+- Suggested Fix:
 """
     else:
         prompt = f"""
-You are a senior SIP/HFA Root Cause Analysis engineer.
+You are a senior SIP/HFA Root Cause Analysis engineer with deep expertise in
+telephony call flows, SIP signaling, and phone state machines.
+
+IMPORTANT RULES:
+- No existing Jira tickets match this issue.
+- Do NOT invent or reference any Jira ticket.
+- Base your analysis strictly on the provided description and log events.
 
 ISSUE DESCRIPTION:
 {description}
 
-LOG ANALYSIS SUMMARY:
+PARSED LOG EVENTS (chronological order):
 {log_summary}
 
 TASK:
-1. State exactly: "No existing Jira ticket matches this issue."
-2. Provide the most likely root cause.
-3. Suggest clear, actionable fixes.
+1. State clearly that no existing Jira ticket matches this issue.
+2. Analyze the log events to identify the most likely root cause.
+3. Provide a clear, technically accurate explanation of the failure.
+4. Suggest concrete, actionable fixes or next debugging steps.
+5. write the output in professional English.
+
+OUTPUT FORMAT:
+- Jira Match Status: No existing Jira ticket matches this issue
+- Root Cause:
+- Suggested Fix:
 """
-  
-    llm_output = run_llm(prompt)
-    output_lines = []
-
-    if jira_context:
-        output_lines.append("**Matching Jira Tickets Found:**")
-        for j in jira_context:
-            output_lines.append(f"- {j['key']}: {j['url']}")
-    else:
-        output_lines.append("**No existing Jira ticket matches this issue.**")
-
-    output_lines.append("\n---\n")
-    output_lines.append("**Root Cause Analysis:**\n")
-    output_lines.append(llm_output)
-
-    return "\n".join(output_lines)
+    return run_llm(prompt)

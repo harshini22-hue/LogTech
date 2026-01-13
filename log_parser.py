@@ -24,7 +24,7 @@ DETAIL_PATTERN = re.compile(
 )
 
 
-def parse_log_file(log_path, output_json):
+def parse_log_file(log_path, output_json=None, return_json=False):
     entries = []
     pending_header = None
 
@@ -32,30 +32,46 @@ def parse_log_file(log_path, output_json):
         for raw_line in f:
             line = raw_line.strip()
 
-            # match header line
             header_match = HEADER_PATTERN.search(line)
             if header_match:
                 pending_header = header_match.groupdict()
                 continue
 
-            # match detail line
             if pending_header:
                 detail_match = DETAIL_PATTERN.match(line)
                 if detail_match:
                     d = detail_match.groupdict()
-
                     entries.append({
                         "level": pending_header["level"],
                         "timestamp": pending_header["timestamp"],
                         "component": d["component"],
-                        "pid": int(d["pid"]),
+                        "pid": int(d["pid"]), # id ex - (889)
                         "source_file": d["file"],
                         "line": int(d["line"]),
                         "message": d["message"].strip()
                     })
-
                 pending_header = None
+def parse_multiple_logs(uploaded_files):
+    combined_entries = []
 
+    for uploaded_file in uploaded_files:
+        temp_path = f"temp_{uploaded_file.name}"
+
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        parsed = parse_log_file(temp_path)
+
+        if parsed and "entries" in parsed:
+            combined_entries.extend(parsed["entries"])
+
+    return {
+        "metadata": {
+            "source_files": [f.name for f in uploaded_files],
+            "total_entries": len(combined_entries)
+        },
+        "entries": combined_entries
+    }
     output = {
         "metadata": {
             "source_file": Path(log_path).name,
@@ -65,11 +81,8 @@ def parse_log_file(log_path, output_json):
         "entries": entries
     }
 
-    with open(output_json, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2)
+    if output_json:
+        with open(output_json, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2)
 
-    print(f"Parsed {len(entries)} log entries → {output_json}")
-
-
-if __name__ == "__main__":
-    parse_log_file("sip_call.txt", "parsed.json")
+    return output
