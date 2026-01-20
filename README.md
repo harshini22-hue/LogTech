@@ -1,6 +1,6 @@
-# LogTech Analysis Tool — Quick Start
+# LogTech Analysis Tool 
 
-This folder contains a small RCA assistant that uses a local Ollama-compatible LLM and Jira lookups.
+This folder contains a small RCA assistant that uses a local Ollama-compatible LLM and Jira MCP server
 
 Required environment variables
 - `OLLAMA_API_BASE` — base URL for Ollama API (default: `http://localhost:11434`).
